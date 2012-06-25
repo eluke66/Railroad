@@ -1,0 +1,122 @@
+* Building User Interface
+  - Need quit button
+* Add multithreading - may need a separate thread for isomorph detection and disk writing.
+
+* Need better looking railroad drawings
+* Need to add more piece types.
+OK * Need way to save and resume - write a save file, detailing options (including input pieces), output location, etc.
+  Also includes how far we were in to the last iteration.
+  Note that this might allow isomorphs into the next iteration, unless we save the hash map!
+ * Isomorph detection should not use full floating point precision, but round to the nearest TOLERANCE?
+ * Need a way to write completed items to disk - maybe write JoinedSections instead of .pngs?
+ * Build external tools to convert file of joined sections to a list of pngs.
+OK * Once we get to N items to process, we should change isomorph detection:
+  - Write all potential items to disk in a file whose name is dictated by the hash of the remaining pieces.
+    > Could optimize this by writing after checking the map as normal but flushing the map when it gets to a given size.
+  - End of an iteration spawns threads that process each file culling isomorphs, and a final thread writes the end file.
+  
+  
+  ================================
+  -- Need 2 I/O threads --
+  
+  * Input I/O thread has an interface for getting a chunk of JoinedSections, like:
+     synchronized List<JoinedSection> getSections();
+    This returns null when we're done with an iteration? 
+  * Output I/O thread writes to disk for nextIteration pieces and written pieces.
+  * I/O decides when to gzip output (BigIteration mode)? If so, needs to know the expected number
+    of incomings!
+  
+  -- IsoMorphs --
+  *  Processor should see if an isomorph match already exists, and if so reject the piece.
+     In BigIteration mode, we can do the same. But if it doesn't exist, we should recommend
+     which file it should go in (last N bits of hash?) Have a method like:
+       Integer testIsomorph(JoinedSection section);
+     Returns the hash if doesn't exist, null if it does.
+  * When the internal set size reaches N, clear it!
+     
+   
+   -- Thread Thoughts --
+   * Filtering thread?
+   * Input Reader
+   * Output Writer
+   * Workers
+   
+   
+ Currently, the RailRoad process is :
+   
+   * Start an iteration:
+     * Read a section
+     * For each unused section/endpoint/configuration combination:
+       * See if we can add the new section
+         * If we can, see if it's complete
+           * If it's complete, write it out
+           * If it's not complete, see if we can filter it out
+           * If we can't filter it out, see if it's an isomorph
+           * If it's not an isomorph, write it for the next iteration
+         * If we can't add it, note the rejection
+     * Finish the iteration
+     
+ Multithreaded, the process would be:
+ 
+ Worker Threads:
+ * Try to get another chunk of sections. If not, return. [Input.GetSections()]
+ * For each unused section/endpoint/configuration combination:
+   * See if we can add the new section
+   * If we can, see if it's complete
+     * If it's complete, give it to the I/O thread [Output.WriteCompleted(section)]
+     * If it's not complete, see if we can filter it out
+     --------> Style #1 - one isomorph proc per thread <------
+     * If we can't filter it out, see if it's an isomorph
+     * If it's not an isomorph, give it to the I/O thread [Output.WriteNext(hash,section)]
+     --------> Style #2 - Single Isomorph processor <-----------
+     * If we can't filter it out, give it to the filter thread. [Filter.IsoMorph(section)]
+     -------------------------------------------------------------------------------------
+   * If we can't add it, note the rejection
+   
+ Driver Thread (will be main thread):
+ * Set up initial conditions (memory output stream, etc.)
+ * Do while we still have pieces (wrote items last iteration):
+   * Get iteration set up (statistics, BigIteration mode, pointing Input and Output threads to correct files, etc.)
+   * Start worker threads
+   * Join worker threads.
+   * Tell output thread it's finished and join it (if < 20k pieces).
+   * If in BigIteration mode, combine output files (maybe make this multithreaded if needed?)
+   * Update progress, clear filter/isomorph, etc.
+ * Finish up progress.
+ 
+Input I/O Thread:
+ void start(int iteration, int numItems, int numThreads)
+  - Open the file, determining if gzip was used, unblock run thread
+ void run() 
+  - Until we hit EOF:
+    - Read N items, adding them to a list.
+    - If EOF, set 'no more added' flag
+    - Add that list to the list of those available - use a BlockingQueue so we block until we have space
+ List<JoinedSection> getSections()
+  - While !noMoreAdded
+  -  Poll an item off the queue, waiting up to a second.
+  -  If got something, return it.
+  - Return null.
+
+ Output I/O Thread:
+  void start(int iteration, int expectedSize) 
+   - Open up output files (tune number of written files), determine if gzip needed, unblock run thread
+  void run() 
+   - While !finished:
+     - Sleep 1 second
+     - Write everything in the queues to disk.
+   - Close outputs.
+  void writeCompleted(JoinedSection)
+   - Adds section to CompletedQueue
+  void writeNext(Hash,JoinedSection)
+   - Adds [hash,section] to WrittenQueue
+  void finish()
+   - Set finished flag
+   
+     
+     
+ To do list:
+ 1.   
+      
+   
+     
